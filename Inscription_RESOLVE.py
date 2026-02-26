@@ -241,7 +241,7 @@ with left:
 
         # ✅ Nouvelle question (réponse libre) — stockée dans l'Excel, visible uniquement côté admin
         diff_procedure_diag = st.text_area(
-            "En tant que vétérinaire de terrain, quelles sont les différences entre la procédure diagnostique expliquée dans la vidéo et la procédure diagnostique Lyme que vous utilisez habituellement",
+            "En tant que vétérinaire de terrain, quelles sont les différences entre la procédure diagnostique expliquée dans la vidéo et la procédure diagnostique Lyme que vous utilisez habituellement?*",
             placeholder="Votre réponse…",
             height=140,
         )
@@ -344,3 +344,4 @@ with st.expander("🔒 Espace administrateur (réservé)"):
             st.caption("Le fichier est stocké côté serveur (non visible publiquement).")
         else:
             st.error("Mot de passe incorrect.")
+
