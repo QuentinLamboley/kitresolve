@@ -25,6 +25,7 @@ COLUMNS = [
     "telephone",
     "clinique",
     "adresse_clinique",
+    "diff_procedure_diag",  # ✅ réponse libre visible uniquement dans l'espace admin
 ]
 
 # ---------- FILE LOCK (Linux/macOS) ----------
@@ -213,7 +214,10 @@ st.write("")
 left, right = st.columns([1.2, 0.8], gap="large")
 
 with left:
-    st.markdown('<div class="card"><h3>📝 Formulaire d’inscription</h3>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="card"><h3>📝 Formulaire d’inscription - A destination des vétérinaires uniquement</h3>',
+        unsafe_allow_html=True,
+    )
 
     with st.form("resolve_form", clear_on_submit=False):
         c1, c2 = st.columns(2, gap="medium")
@@ -235,6 +239,13 @@ with left:
             height=110,
         )
 
+        # ✅ Nouvelle question (réponse libre) — stockée dans l'Excel, visible uniquement côté admin
+        diff_procedure_diag = st.text_area(
+            "En tant que vétérinaire de terrain, quelles sont les différences entre la procédure diagnostique expliquée dans la vidéo et la procédure diagnostique Lyme que vous utilisez habituellement",
+            placeholder="Votre réponse…",
+            height=140,
+        )
+
         submitted = st.form_submit_button("✅ Valider la demande")
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -246,6 +257,7 @@ with left:
         tel_n = normalize_spaces(telephone)
         clinique_n = normalize_spaces(clinique)
         adresse_n = normalize_spaces(adresse)
+        diff_diag_n = normalize_spaces(diff_procedure_diag)
 
         missing = []
         if not prenom_n:
@@ -277,6 +289,7 @@ with left:
                     "telephone": tel_n,
                     "clinique": clinique_n,
                     "adresse_clinique": adresse_n,
+                    "diff_procedure_diag": diff_diag_n,
                 }
                 try:
                     append_row_to_xlsx(row)
@@ -316,7 +329,7 @@ with st.expander("🔒 Espace administrateur (réservé)"):
             total = len(df)
             st.metric("Nombre total d'inscriptions", total)
 
-            # Affichage tableau
+            # Affichage tableau (inclut la colonne diff_procedure_diag)
             st.dataframe(df, use_container_width=True, height=360)
 
             # Bouton de téléchargement
