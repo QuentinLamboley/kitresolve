@@ -1567,37 +1567,7 @@ if current_view == "home":
     home_left, home_right = st.columns([1.08, 0.92], gap="large")
 
     with home_left:
-        st.markdown(
-            '<div class="section-title" style="font-size:24px; line-height:1.2; margin-top:10px; white-space:nowrap;">Vous souhaitez participer ? Choisissez votre profil</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<div class="section-note">Sélectionnez le parcours qui correspond à votre situation, puis poursuivez vers une page dédiée au formulaire d’inclusion.</div>',
-            unsafe_allow_html=True,
-        )
-
-        role_cols = st.columns(2, gap="large")
-        for col, key in zip(role_cols, ["detenteur", "veterinaire"]):
-            cfg = ROLE_OPTIONS[key]
-            with col:
-                st.markdown('<div class="role-zone"><div class="role-stack">', unsafe_allow_html=True)
-                render_role_visual(
-                    image_path=cfg["image_path"],
-                    fallback_emoji=cfg["emoji"],
-                    fallback_title=cfg["label"],
-                )
-                st.markdown('<div class="role-button-wrap"><div class="role-click">', unsafe_allow_html=True)
-                if st.button(
-                    cfg["label"],
-                    key=f"select_role_{key}",
-                    use_container_width=True,
-                ):
-                    go_form(key)
-                    st.rerun()
-                st.markdown("</div></div></div></div>", unsafe_allow_html=True)
-
-    with home_right:
-        st.markdown(
+       st.markdown(
             """
 <div class="glass-card">
   <h3 class="glass-title">PROTOCOLE DE L'ETUDE</h3>
@@ -1639,6 +1609,69 @@ if current_view == "home":
 """,
             unsafe_allow_html=True,
         )
+
+
+
+
+
+
+    
+        
+    with home_right:
+st.markdown(
+            '<div class="section-title" style="font-size:24px; line-height:1.2; margin-top:10px; white-space:nowrap;">Vous souhaitez participer ? Choisissez votre profil</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="section-note">Sélectionnez le parcours qui correspond à votre situation, puis poursuivez vers une page dédiée au formulaire d’inclusion.</div>',
+            unsafe_allow_html=True,
+        )
+
+        role_cols = st.columns(2, gap="large")
+        for col, key in zip(role_cols, ["detenteur", "veterinaire"]):
+            cfg = ROLE_OPTIONS[key]
+            with col:
+                st.markdown('<div class="role-zone"><div class="role-stack">', unsafe_allow_html=True)
+                render_role_visual(
+                    image_path=cfg["image_path"],
+                    fallback_emoji=cfg["emoji"],
+                    fallback_title=cfg["label"],
+                )
+                st.markdown('<div class="role-button-wrap"><div class="role-click">', unsafe_allow_html=True)
+                if st.button(
+                    cfg["label"],
+                    key=f"select_role_{key}",
+                    use_container_width=True,
+                ):
+                    go_form(key)
+                    st.rerun()
+                st.markdown("</div></div></div></div>", unsafe_allow_html=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+ 
 
 # ==============================================================================
 # FORM PAGE
