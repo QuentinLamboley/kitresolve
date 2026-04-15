@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from typing import Dict, List
 from xml.sax.saxutils import escape
+import smtplib
+from email.message import EmailMessage
 
 import pandas as pd
 import streamlit as st
@@ -519,6 +521,35 @@ def get_download_bytes(path: str) -> bytes:
     with open(path, "rb") as f:
         return f.read()
 
+def send_pdf_email(
+    pdf_bytes: bytes,
+    pdf_filename: str,
+    to_email: str,
+    subject: str,
+    body: str,
+):
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = st.secrets["SMTP_USER"]
+    msg["To"] = to_email
+    msg.set_content(body)
+
+    msg.add_attachment(
+        pdf_bytes,
+        maintype="application",
+        subtype="pdf",
+        filename=pdf_filename,
+    )
+
+    with smtplib.SMTP_SSL(
+        st.secrets["SMTP_HOST"],
+        int(st.secrets["SMTP_PORT"]),
+    ) as smtp:
+        smtp.login(
+            st.secrets["SMTP_USER"],
+            st.secrets["SMTP_PASSWORD"],
+        )
+        smtp.send_message(msg)        
 
 def image_to_data_uri(path: str) -> str:
     if not path:
@@ -2106,8 +2137,26 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
                 append_submission(rows)
 
                 pdf_bytes = create_submission_pdf_bytes(payload, rows)
-                st.session_state.last_pdf_bytes = pdf_bytes
-                st.session_state.last_pdf_filename = make_pdf_filename(selected_role)
+st.session_state.last_pdf_bytes = pdf_bytes
+st.session_state.last_pdf_filename = make_pdf_filename(selected_role)
+
+try:
+    send_pdf_email(
+        pdf_bytes=pdf_bytes,
+        pdf_filename=st.session_state.last_pdf_filename,
+        to_email=st.secrets["ADMIN_EMAIL"],
+        subject="Nouvelle demande RESOLVE",
+        body=(
+            "Bonjour,\n\n"
+            "Une nouvelle demande RESOLVE a été enregistrée.\n"
+            "Le PDF récapitulatif est en pièce jointe.\n\n"
+            "Cordialement,"
+        ),
+    )
+except Exception as mail_error:
+    st.warning(
+        f"La demande a bien été enregistrée, mais l’envoi automatique du PDF a échoué : {mail_error}"
+    )
 
                 st.success("✅ Votre demande a bien été enregistrée.")
                 if selected_role == "detenteur":
