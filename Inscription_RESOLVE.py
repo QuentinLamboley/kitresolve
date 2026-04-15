@@ -29,8 +29,8 @@ DATA_DIR = "data"
 XLSX_PATH = os.path.join(DATA_DIR, "resolve_study_data.xlsx")
 ADMIN_PASSWORD = "SeeALL"
 
-DETENTEUR_IMAGE_PATH = r"C:\Users\q.lamboley\Downloads\detenteurs.png"
-VETERINAIRE_IMAGE_PATH = r"C:\Users\q.lamboley\Downloads\veterinairesequin.png"
+DETENTEUR_IMAGE_PATH = "https://raw.githubusercontent.com/QuentinLamboley/kitresolve/main/detenteurs.png"
+VETERINAIRE_IMAGE_PATH = "https://raw.githubusercontent.com/QuentinLamboley/kitresolve/main/veterinairesequin.png"
 
 SHEET_SUBMISSIONS = "submissions"
 SHEET_SAMPLES = "sample_locations"
@@ -521,8 +521,25 @@ def get_download_bytes(path: str) -> bytes:
 
 
 def image_to_data_uri(path: str) -> str:
-    if not path or not os.path.exists(path):
+    if not path:
         return ""
+
+    if path.startswith("http://") or path.startswith("https://"):
+        try:
+            import requests
+
+            response = requests.get(path, timeout=10)
+            response.raise_for_status()
+            content = response.content
+            mime_type = response.headers.get("Content-Type", "").split(";")[0] or "image/png"
+            encoded = base64.b64encode(content).decode("utf-8")
+            return f"data:{mime_type};base64,{encoded}"
+        except Exception:
+            return ""
+
+    if not os.path.exists(path):
+        return ""
+
     mime_type = mimetypes.guess_type(path)[0] or "image/png"
     with open(path, "rb") as f:
         encoded = base64.b64encode(f.read()).decode("utf-8")
