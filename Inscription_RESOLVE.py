@@ -1567,7 +1567,7 @@ current_view = st.session_state.current_view
 # HOME
 # ==============================================================================
 if current_view == "home":
-    home_left, home_right = st.columns([1.08, 0.92], gap="large")
+    home_left, home_right = st.columns([0.92, 1.08], gap="large")
 
     with home_left:
         st.markdown(
