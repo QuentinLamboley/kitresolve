@@ -2137,26 +2137,26 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
                 append_submission(rows)
 
                 pdf_bytes = create_submission_pdf_bytes(payload, rows)
-st.session_state.last_pdf_bytes = pdf_bytes
-st.session_state.last_pdf_filename = make_pdf_filename(selected_role)
+                st.session_state.last_pdf_bytes = pdf_bytes
+                st.session_state.last_pdf_filename = make_pdf_filename(selected_role)
 
-try:
-    send_pdf_email(
-        pdf_bytes=pdf_bytes,
-        pdf_filename=st.session_state.last_pdf_filename,
-        to_email=st.secrets["ADMIN_EMAIL"],
-        subject="Nouvelle demande RESOLVE",
-        body=(
-            "Bonjour,\n\n"
-            "Une nouvelle demande RESOLVE a été enregistrée.\n"
-            "Le PDF récapitulatif est en pièce jointe.\n\n"
-            "Cordialement,"
-        ),
-    )
-except Exception as mail_error:
-    st.warning(
-        f"La demande a bien été enregistrée, mais l’envoi automatique du PDF a échoué : {mail_error}"
-    )
+                try:
+                    send_pdf_email(
+                        pdf_bytes=pdf_bytes,
+                        pdf_filename=st.session_state.last_pdf_filename,
+                        to_email=st.secrets["ADMIN_EMAIL"],
+                        subject="Nouvelle demande RESOLVE",
+                        body=(
+                            "Bonjour,\n\n"
+                            "Une nouvelle demande RESOLVE a été enregistrée.\n"
+                            "Le PDF récapitulatif est en pièce jointe.\n\n"
+                            "Cordialement,"
+                        ),
+                    )
+                except Exception as mail_error:
+                    st.warning(
+                        f"La demande a bien été enregistrée, mais l’envoi automatique du PDF a échoué : {mail_error}"
+                    )
 
                 st.success("✅ Votre demande a bien été enregistrée.")
                 if selected_role == "detenteur":
