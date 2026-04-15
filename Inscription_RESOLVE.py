@@ -1563,11 +1563,14 @@ current_view = st.session_state.current_view
 # ==============================================================================
 # HOME
 # ==============================================================================
+# ==============================================================================
+# HOME
+# ==============================================================================
 if current_view == "home":
     home_left, home_right = st.columns([1.08, 0.92], gap="large")
 
     with home_left:
-       st.markdown(
+        st.markdown(
             """
 <div class="glass-card">
   <h3 class="glass-title">PROTOCOLE DE L'ETUDE</h3>
@@ -1610,15 +1613,8 @@ if current_view == "home":
             unsafe_allow_html=True,
         )
 
-
-
-
-
-
-    
-        
     with home_right:
-st.markdown(
+        st.markdown(
             '<div class="section-title" style="font-size:24px; line-height:1.2; margin-top:10px; white-space:nowrap;">Vous souhaitez participer ? Choisissez votre profil</div>',
             unsafe_allow_html=True,
         )
@@ -1646,6 +1642,7 @@ st.markdown(
                     go_form(key)
                     st.rerun()
                 st.markdown("</div></div></div></div>", unsafe_allow_html=True)
+
 
 
 
