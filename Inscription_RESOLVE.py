@@ -1670,7 +1670,7 @@ if current_view == "home":
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">6</div>
-      <div><b>Envoi d’un message informant du prélèvement au 06.42.13.69.64 pour recevoir le e-bon qui prend en charge l’acheminement des prélèvements.</b>   </div>
+      <div><b>Envoi d’un message informant du prélèvement au 06.42.13.69.64 pour recevoir le e-bon qui prend en charge l’acheminement des prélèvements</b>   </div>
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">7</div>
