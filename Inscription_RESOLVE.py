@@ -1619,7 +1619,7 @@ st.markdown(
   <p class="hero-subtitle">
     Cet site centralise les signalements et les demandes de kits dans le cadre de l’étude RESOLVE financée par l'IFCE et le Fonds Eperon.
     L’objectif est de contribuer au développement et à la validation d’un outil d’aide au diagnostic à partir
-    d’une enquête prospective de terrain icluant des chevaux suspectés de Lyme. Nous souhaitons documenter de façon rigoureuse les tableaux cliniques    suspects, homogénéiser les pratiques,
+    d’une enquête prospective de terrain incluant des chevaux suspectés de Lyme. Nous souhaitons documenter de façon rigoureuse les tableaux cliniques    suspects, homogénéiser les pratiques,
     et disposer de données de terrain solides pour améliorer la classification diagnostique des suspicions de borréliose de Lyme équine.
     Pour chaque cheval inclut dans l'étude, les analyses liées à la borréliose de Lyme sont intégralement prises en charge
     <strong style="color:#ffffff;">(sérologie ELISA + Western Blot + PCR)</strong>, tout comme l’acheminement
