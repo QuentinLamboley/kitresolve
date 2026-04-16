@@ -1654,7 +1654,7 @@ if current_view == "home":
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">2</div>
-      <div><b>Etude de la candidatures, validation des critères d'inclusion et prise de rdv pour les prélèvements</b></div>
+      <div><b>Etude des candidatures, validation des critères d'inclusion et prise de rdv pour les prélèvements</b></div>
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">3</div>
