@@ -1650,7 +1650,7 @@ if current_view == "home":
   <div class="timeline">
     <div class="timeline-item">
       <div class="timeline-badge">1</div>
-      <div><b>Choix du profil et inscription des chevaux à l'étude.</b></div>
+      <div><b>Choix du profil et inscription des chevaux à l'étude</b></div>
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">2</div>
