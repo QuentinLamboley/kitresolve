@@ -1454,7 +1454,9 @@ div[data-baseweb="select"] > div,
     inset 0 1px 0 rgba(255,255,255,0.90) !important;
 }
 
-input, textarea{
+input, textarea,
+div[data-baseweb="select"] span,
+div[data-baseweb="select"] div{
   color:#111111 !important;
   -webkit-text-fill-color:#111111 !important;
 }
