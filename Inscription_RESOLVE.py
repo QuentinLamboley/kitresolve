@@ -2218,10 +2218,7 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
     Les analyses de borréliose de Lyme équine (ELISA + WB + PCR) sont prises en charge,
     tout comme l’acheminement des échantillons. Après le prélèvement, un message doit être envoyé
     au 06 42 13 69 64 pour recevoir le e-bon de transport, puis le colis doit être construit avec
-    l’ensemble des pièces nécessaires et adressé au Laboratoire LABEO (Frank Duncombe),
-    1 route Rosel, 14 280 Saint Contest.
-  </p>
-</div>
+    l’ensemble des pièces nécessaires et adressé au Laboratoire LABEO (Frank Duncombe)<br>1 route Rosel<br>14 280 Saint Contest</p></div>
 """,
                     unsafe_allow_html=True,
                 )
