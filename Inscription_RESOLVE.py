@@ -1572,7 +1572,7 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 st.markdown(
     """
 <div class="hero-shell">
-  <div class="kicker">ANSES × RESPE · enquête prospective RESOLVE · Contact : 06.42.13.69.64 || quentin.lamboley@anses.fr</div>
+  <div class="kicker">ANSES × RESPE · enquête prospective RESOLVE · Contact (uniquement si nécessaire) : 06.42.13.69.64 || quentin.lamboley@anses.fr</div>
   <div class="hero-title">PROJET RESOLVE<br>Objectif&nbsp;: mieux caractériser la borréliose de Lyme équine en France</div>
   <p class="hero-subtitle">
     Cet site centralise les signalements et les demandes de kits dans le cadre de l’étude RESOLVE financée par l'IFCE et le Fonds Eperon.
@@ -1612,7 +1612,7 @@ if current_view == "home":
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">2</div>
-      <div><b>Validation des critères d'inclusion et prise de rdv pour les prélèvements</b></div>
+      <div><b>Etude de la candidatures, validation des critères d'inclusion et prise de rdv pour les prélèvements</b></div>
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">3</div>
@@ -1759,9 +1759,9 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
 
             c3, c4 = st.columns(2, gap="medium")
             with c3:
-                contact_email = st.text_input("Mail *", placeholder="Ex : marie.dupont@clinique.fr", key=f"contact_email_{selected_role}")
+                contact_email = st.text_input("Mail *", placeholder="Ex : marie.dupont@gmail.com", key=f"contact_email_{selected_role}")
             with c4:
-                contact_telephone = st.text_input("Téléphone *", placeholder="Ex : +33 6 12 34 56 78", key=f"contact_telephone_{selected_role}")
+                contact_telephone = st.text_input("Téléphone *", placeholder="Ex : 06 12 34 56 78", key=f"contact_telephone_{selected_role}")
 
             c6, c7, c8 = st.columns(3, gap="medium")
             with c6:
@@ -1808,7 +1808,7 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
                 with v3:
                     veterinaire_email = st.text_input("Mail du vétérinaire *", placeholder="Ex : clinique@veto.fr", key="veterinaire_email_detenteur")
                 with v4:
-                    veterinaire_telephone = st.text_input("Téléphone du vétérinaire *", placeholder="Ex : +33 6 00 00 00 00", key="veterinaire_telephone_detenteur")
+                    veterinaire_telephone = st.text_input("Téléphone du vétérinaire *", placeholder="Ex : 06 00 00 00 00", key="veterinaire_telephone_detenteur")
 
                 v5, v6, v7, v8 = st.columns(4, gap="medium")
                 with v5:
@@ -1952,7 +1952,7 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
                     if selected_role == "detenteur":
                         if signes_cliniques_articulaires:
                             accord_prelevement_liquide_synovial = st.checkbox(
-                                "J’accepte que mon vétérinaire réalise un prélèvement de liquide synovial. La PCR sera alors réalisée sur ce prélèvement, accroissant considérablement la capacité du diagnostic.",
+                                "J’accepte que mon vétérinaire réalise un prélèvement de liquide synovial. La PCR sera alors réalisée sur ce prélèvement, accroissant considérablement la fiabilité du diagnostic.",
                                 value=False,
                                 key=f"accord_prelevement_liquide_synovial_{selected_role}_{i}",
                             )
@@ -2072,7 +2072,7 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
             l1, l2 = st.columns(2, gap="medium")
             with l1:
                 a_besoin_kit_resolve = st.checkbox(
-                    "Je souhaite recevoir / faire recevoir un kit RESOLVE",
+                    "Je souhaite recevoir / faire envoyer un kit RESOLVE",
                     value=True,
                     key=f"a_besoin_kit_resolve_{selected_role}",
                 )
