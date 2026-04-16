@@ -626,25 +626,65 @@ def make_pdf_filename(role: str) -> str:
 
 
 def add_pdf_table(story, data, col_widths=None):
-    table = Table(data, colWidths=col_widths, hAlign="LEFT")
+    styles = getSampleStyleSheet()
+
+    cell_style = ParagraphStyle(
+        "ResolveTableCell",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=11,
+        textColor=colors.black,
+        alignment=TA_LEFT,
+        wordWrap="CJK",   # force le retour à la ligne même sur contenus longs
+        spaceAfter=0,
+        spaceBefore=0,
+    )
+
+    header_style = ParagraphStyle(
+        "ResolveTableHeader",
+        parent=styles["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=9,
+        leading=11,
+        textColor=colors.HexColor("#10243e"),
+        alignment=TA_LEFT,
+        wordWrap="CJK",
+        spaceAfter=0,
+        spaceBefore=0,
+    )
+
+    wrapped_data = []
+    for row_idx, row in enumerate(data):
+        wrapped_row = []
+        for value in row:
+            text = escape("" if value is None else str(value))
+            style = header_style if row_idx == 0 else cell_style
+            wrapped_row.append(Paragraph(text.replace("\n", "<br/>"), style))
+        wrapped_data.append(wrapped_row)
+
+    table = Table(
+        wrapped_data,
+        colWidths=col_widths,
+        hAlign="LEFT",
+        repeatRows=1,
+    )
+
     table.setStyle(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#dfeaf6")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#10243e")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("LEADING", (0, 0), (-1, -1), 12),
                 ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#aabbd0")),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 6),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
             ]
         )
     )
+
     story.append(table)
     story.append(Spacer(1, 0.35 * cm))
 
@@ -721,7 +761,7 @@ def create_submission_pdf_bytes(payload: dict, rows: List[dict]) -> bytes:
             ["Code postal", normalize_spaces(payload.get("contact_code_postal", ""))],
             ["Région", normalize_spaces(payload.get("contact_region", ""))],
         ],
-        [5.2 * cm, 12.2 * cm],
+        [4.8 * cm, 12.6 * cm],
     )
 
     if payload.get("profil") == "detenteur":
