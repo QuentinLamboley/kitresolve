@@ -2012,12 +2012,12 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
                         key=f"accord_bilan_sanguin_complet_{selected_role}_{i}",
                     )
                     accord_test_negatif_piroplasmose = st.checkbox(
-                        "test négatif piroplasmose",
+                        "test piroplasmose",
                         value=False,
                         key=f"accord_test_negatif_piroplasmose_{selected_role}_{i}",
                     )
                     accord_test_negatif_ehrlichiose = st.checkbox(
-                        "test négatif ehrlichiose",
+                        "test ehrlichiose",
                         value=False,
                         key=f"accord_test_negatif_ehrlichiose_{selected_role}_{i}",
                     )
