@@ -1778,7 +1778,7 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
         st.markdown(
             """
 <div class="form-intro">
-  Renseignez les coordonnées nécessaires, puis ajoutez un ou plusieurs chevaux.</div>
+  Ajoutez un ou plusieurs chevaux, puis renseignez les éléments nécessaires.</div>
 """,
             unsafe_allow_html=True,
         )
