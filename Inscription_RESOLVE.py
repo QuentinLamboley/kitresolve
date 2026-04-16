@@ -2203,11 +2203,11 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
                 st.success("✅ Votre demande a bien été enregistrée.")
                 if selected_role == "detenteur":
                     st.info(
-                        "Merci pour votre signalement. Les coordonnées du vétérinaire ont bien été enregistrées afin qu’il puisse être contacté et recevoir les éléments nécessaires."
+                        "Merci pour votre signalement. Nous allons étudier la candidature et revenir vers vous au plus vite 😊."
                     )
                 else:
                     st.info(
-                        "Merci pour votre participation à l’étude RESOLVE. Votre demande de kit et les informations d’inclusion ont bien été prises en compte."
+                        "Merci pour votre participation à l’étude RESOLVE. Nous allons étudier la candidature et revenir vers vous au plus vite 😊."
                     )
 
                 st.markdown(
