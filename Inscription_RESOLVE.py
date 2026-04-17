@@ -2347,10 +2347,7 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
                         to_email=st.secrets["ADMIN_EMAIL"],
                         subject=admin_subject,
                         body=admin_body,
-                    ),
-                        
                     )
-                    
                 except Exception as mail_error:
                     st.warning(
                         f"La demande a bien été enregistrée, mais l’envoi automatique du PDF a échoué : {mail_error}"
