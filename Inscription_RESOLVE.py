@@ -521,6 +521,157 @@ def get_download_bytes(path: str) -> bytes:
     with open(path, "rb") as f:
         return f.read()
 
+def build_requested_sampling_lines(payload: dict) -> str:
+    lines = []
+    horses = payload.get("horses", [])
+
+    for horse in horses:
+        horse_name = normalize_spaces(horse.get("cheval_nom", "")) or "Cheval non renseigné"
+
+        requested = []
+
+        # Toujours sanguin dans le protocole d'inclusion
+        requested.append("Prélèvement sanguin (10 tubes dont 9 secs et 1 EDTA)")
+
+        if horse.get("accord_prelevement_liquide_synovial", False):
+            requested.append("Prélèvement de liquide synovial")
+
+        if horse.get("accord_prelevement_humeur_aqueuse", False):
+            requested.append("Prélèvement d’humeur aqueuse")
+
+        if horse.get("accord_prelevement_cutane", False):
+            requested.append("Prélèvement cutané")
+
+        if horse.get("accord_bilan_sanguin_complet", False):
+            requested.append("Bilan sanguin complet (NFS, paramètres musculaires, rénaux, hépatiques, fibrinogène et/ou SAA)")
+
+        if horse.get("accord_test_negatif_piroplasmose", False):
+            requested.append("Test piroplasmose")
+
+        if horse.get("accord_test_negatif_ehrlichiose", False):
+            requested.append("Test ehrlichiose")
+
+        for item in requested:
+            lines.append(f"- {horse_name} : {item}")
+
+    return "\n".join(lines) if lines else "- Aucun prélèvement spécifique renseigné"
+
+
+def build_admin_email_content(payload: dict) -> tuple[str, str]:
+    profil = payload.get("profil", "")
+    contact_prenom = normalize_spaces(payload.get("contact_prenom", ""))
+    contact_nom = normalize_spaces(payload.get("contact_nom", ""))
+    contact_email = normalize_email(payload.get("contact_email", ""))
+
+    requested_lines = build_requested_sampling_lines(payload)
+
+    if profil == "detenteur":
+        owner_email = contact_email
+        vet_email = normalize_email(payload.get("veterinaire_email", ""))
+
+        subject = "Demande Lyme Détenteur"
+        body = f"""Bonjour,
+
+Nous vous contactons dans le cadre du projet RESOLVE, porté par le RESPE et l’ANSES, visant à améliorer le diagnostic de la borréliose de Lyme chez le cheval grâce à une enquête de terrain. 
+Pour cela, nous sollicitons votre collaboration afin d’inclure des chevaux suspectés de borréliose de Lyme parmi ceux suivis par votre structure. Pour chaque cheval inclus répondant à nos critères d’inclusion, il vous sera simplement demandé de réaliser des prélèvements et de compléter un court questionnaire clinique et contextuel. Les analyses liées à la borréliose de Lyme (ELISA + WB + PCR) sont prises en charge, tout comme l’envoi des échantillons au laboratoire LABEO et la transmission des résultats. Les données collectées permettront de développer un outil d’aide au diagnostic totalement gratuit, afin de mieux caractériser la maladie et d’harmoniser les pratiques.
+
+Ce mail fait suite à la demande de {contact_prenom} {contact_nom}, qui souhaiterait réaliser les prélèvements suivants :
+
+{requested_lines}
+
+Voici ci-dessous les différentes étapes à suivre pour la prise en charge des analyses et votre entrée dans l'étude :
+
+1 – Nous communiquer l'adresse de votre clinique pour recevoir votre kit RESOLVE dans les prochains jours (06.42.13.69.64)
+
+2 – Renseignement du formulaire de consentement (ci-joint) par les propriétaires.
+
+3 – Réception du kit RESOLVE.
+
+4 – Prélèvements sanguins (10 tubes dont 9 secs et 1 EDTA) + autres prélèvements / analyses si demandés précédemment.
+
+5 – Collage des étiquettes RESOLVE correspondant au N° du cheval sur les tubes de prélèvements.
+
+6 – Renseignement du questionnaire papier ou en ligne.
+
+7 – Envoi d’un message informant du prélèvement au 06 42 13 69 64 pour recevoir le e-bon qui prend en charge l’acheminement des prélèvements.
+
+8 – Construction du colis avec l’ensemble des pièces précédentes et envoi à :
+
+-----------------------------------------------------
+Laboratoire LABEO (Frank Duncombe)
+1 route Rosel
+14 280 Saint Contest
+-----------------------------------------------------
+
+Le protocole que vous recevrez dans le kit sera peut-être légèrement différent, mais la dernière version est celle de ce mail.
+
+Nous vous remercions par avance pour votre aide, essentielle à la concrétisation de ce projet, et restons à votre disposition pour toute question ou précision (06 42 13 69 64 | quentin.lamboley@anses.fr).
+
+Bien cordialement,
+
+Quentin Lamboley
+Doctorant – Responsable du projet RESOLVE
+
+Mail du détenteur : {owner_email}
+Mail du vétérinaire : {vet_email}
+"""
+        return subject, body
+
+    else:
+        vet_email = contact_email
+        owner_email = normalize_email(payload.get("proprietaire_email", ""))
+
+        # Comme le profil vétérinaire ne renseigne pas actuellement de mail propriétaire,
+        # on peut essayer de le déduire via les chevaux si tu l’ajoutes plus tard.
+        if not owner_email:
+            owner_email = "Non renseigné"
+
+        subject = "Demande Lyme Vétérinaire"
+        body = f"""Bonjour,
+
+Nous vous recontactons dans le cadre du projet RESOLVE, porté par le RESPE et l’ANSES, visant à améliorer le diagnostic de la borréliose de Lyme chez le cheval grâce à une enquête de terrain. 
+Pour cela, nous sollicitons votre collaboration afin d’inclure des chevaux suspectés de borréliose de Lyme parmi ceux suivis par votre structure. Pour chaque cheval inclus répondant à nos critères d’inclusion, il vous sera simplement demandé de réaliser des prélèvements et de compléter un court questionnaire clinique et contextuel. Les analyses liées à la borréliose de Lyme (ELISA + WB + PCR) sont prises en charge, tout comme l’envoi des échantillons au laboratoire LABEO et la transmission des résultats. Les données collectées permettront de développer un outil d’aide au diagnostic totalement gratuit, afin de mieux caractériser la maladie et d’harmoniser les pratiques.
+
+Ce mail fait suite à votre demande dont les prélèvements seraient les suivants :
+
+{requested_lines}
+
+Voici ci-dessous les différentes étapes à suivre pour la prise en charge des analyses et votre entrée dans l'étude :
+
+1 – Renseignement du formulaire de consentement (ci-joint) par les propriétaires.
+
+2 – Réception du kit RESOLVE à l'adresse complétée précédemment.
+
+3 – Prélèvements sanguins (10 tubes dont 9 secs et 1 EDTA) + autres prélèvements / analyses si demandés précédemment.
+
+4 – Collage des étiquettes RESOLVE correspondant au N° du cheval sur les tubes de prélèvements.
+
+5 – Renseignement du questionnaire papier ou en ligne.
+
+6 – Envoi d’un message informant du prélèvement au 06 42 13 69 64 pour recevoir le e-bon qui prend en charge l’acheminement des prélèvements.
+
+7 – Construction du colis avec l’ensemble des pièces précédentes et envoi à :
+
+-----------------------------------------------------
+Laboratoire LABEO (Frank Duncombe)
+1 route Rosel
+14 280 Saint Contest
+-----------------------------------------------------
+
+Le protocole que vous recevrez dans le kit sera peut-être légèrement différent, mais la dernière version est celle de ce mail.
+
+Nous vous remercions par avance pour votre aide, essentielle à la concrétisation de ce projet, et restons à votre disposition pour toute question ou précision (06 42 13 69 64 | quentin.lamboley@anses.fr).
+
+Bien cordialement,
+
+Quentin Lamboley
+Doctorant – Responsable du projet RESOLVE
+
+Mail du détenteur : {owner_email}
+Mail du vétérinaire : {vet_email}
+"""
+        return subject, body
+
 def send_pdf_email(
     pdf_bytes: bytes,
     pdf_filename: str,
@@ -1654,30 +1805,34 @@ if current_view == "home":
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">2</div>
-      <div><b>Etude des candidatures, validation des critères d'inclusion et prise de rdv pour les prélèvements</b></div>
+      <div><b>Etude des candidatures, validation des critères d'inclusion et réponse</b></div>
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">3</div>
-      <div><b>Réception du kit RESOLVE par le vétérinaire</b></div>
+      <div><b>Prise de rdv pour les prélèvements</b></div>
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">4</div>
-      <div><b>Prélèvements sanguins (10 tubes dont 9 secs et 1 EDTA) et éventuels autres prélèvements</b></div>
+      <div><b>Réception du kit RESOLVE par le vétérinaire</b></div>
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">5</div>
-      <div><b>Remplissage du questionnaire et étiquettage</b></div>
+      <div><b>Prélèvements sanguins (10 tubes dont 9 secs et 1 EDTA) et éventuels autres prélèvements</b></div>
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">6</div>
-      <div><b>Envoi d’un message informant du prélèvement au 06.42.13.69.64 pour recevoir le e-bon qui prend en charge l’acheminement des prélèvements</b>   </div>
+      <div><b>Remplissage du questionnaire et collage des étiquettes RESOLVE correspondant au N° du cheval sur les tubes de prélèvements.</b></div>
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">7</div>
-      <div><b>Construction du colis et envoi à :</b><br><br>Laboratoire LABEO (Frank Duncombe)<br>1 route Rosel<br>14 280 Saint Contest</div>
+      <div><b>Envoi d’un message informant du prélèvement au 06.42.13.69.64 pour recevoir le e-bon qui prend en charge l’acheminement des prélèvements</b>   </div>
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">8</div>
+      <div><b>Construction du colis et envoi à :</b><br><br>Laboratoire LABEO (Frank Duncombe)<br>1 route Rosel<br>14 280 Saint Contest</div>
+    </div>
+    <div class="timeline-item">
+      <div class="timeline-badge">9</div>
       <div><b>Transmission des résultats et amélioration de l’outil diagnostique RESOLVE</b></div>
     </div>
   </div>
@@ -1832,7 +1987,7 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
                 with p2:
                     st.text_input(
                         "Information",
-                        value="La région de la clinique n'a pas besoin d'être celle du cheval.",
+                        value="L'adresse demandée est bien entendu celle de votre clinique 😊",
                         disabled=True,
                         key=f"info_structure_{selected_role}",
                     )
@@ -2182,19 +2337,20 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
                 st.session_state.last_pdf_bytes = pdf_bytes
                 st.session_state.last_pdf_filename = make_pdf_filename(selected_role)
 
+
                 try:
+                    admin_subject, admin_body = build_admin_email_content(payload)
+
                     send_pdf_email(
                         pdf_bytes=pdf_bytes,
                         pdf_filename=st.session_state.last_pdf_filename,
                         to_email=st.secrets["ADMIN_EMAIL"],
-                        subject="Nouvelle demande RESOLVE",
-                        body=(
-                            "Bonjour,\n\n"
-                            "Une nouvelle demande RESOLVE a été enregistrée.\n"
-                            "Le PDF récapitulatif est en pièce jointe.\n\n"
-                            "Cordialement,"
-                        ),
+                        subject=admin_subject,
+                        body=admin_body,
+                    ),
+                        
                     )
+                    
                 except Exception as mail_error:
                     st.warning(
                         f"La demande a bien été enregistrée, mais l’envoi automatique du PDF a échoué : {mail_error}"
