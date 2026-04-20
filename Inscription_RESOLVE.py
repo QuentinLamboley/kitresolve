@@ -521,6 +521,15 @@ def get_download_bytes(path: str) -> bytes:
     with open(path, "rb") as f:
         return f.read()
 
+def get_secret(name: str, default=None, required: bool = False):
+    value = st.secrets.get(name, default)
+    if required and (value is None or str(value).strip() == ""):
+        raise RuntimeError(
+            f"Secret manquant : {name}. "
+            "Vérifie les secrets de l'app Streamlit Cloud ou le fichier .streamlit/secrets.toml."
+        )
+    return value
+
 def build_requested_sampling_lines(payload: dict) -> str:
     lines = []
     horses = payload.get("horses", [])
@@ -679,9 +688,14 @@ def send_pdf_email(
     subject: str,
     body: str,
 ):
+    smtp_user = get_secret("SMTP_USER", required=True)
+    smtp_host = get_secret("SMTP_HOST", required=True)
+    smtp_port = int(get_secret("SMTP_PORT", required=True))
+    smtp_password = get_secret("SMTP_PASSWORD", required=True)
+
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = st.secrets["SMTP_USER"]
+    msg["From"] = smtp_user
     msg["To"] = to_email
     msg.set_content(body)
 
@@ -692,15 +706,9 @@ def send_pdf_email(
         filename=pdf_filename,
     )
 
-    with smtplib.SMTP_SSL(
-        st.secrets["SMTP_HOST"],
-        int(st.secrets["SMTP_PORT"]),
-    ) as smtp:
-        smtp.login(
-            st.secrets["SMTP_USER"],
-            st.secrets["SMTP_PASSWORD"],
-        )
-        smtp.send_message(msg)        
+    with smtplib.SMTP_SSL(smtp_host, smtp_port) as smtp:
+        smtp.login(smtp_user, smtp_password)
+        smtp.send_message(msg)     
 
 def image_to_data_uri(path: str) -> str:
     if not path:
@@ -1019,6 +1027,34 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+
+
+
+
+
+
+
+
+
+
+
+with st.expander("DEBUG SECRETS", expanded=False):
+    st.write("Clés chargées :", list(st.secrets.keys()))
+    st.write("ADMIN_EMAIL présent ?", "ADMIN_EMAIL" in st.secrets)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 if "selected_role" not in st.session_state:
     st.session_state.selected_role = None
@@ -2341,10 +2377,12 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
                 try:
                     admin_subject, admin_body = build_admin_email_content(payload)
 
+                    admin_email = get_secret("ADMIN_EMAIL", required=True)
+
                     send_pdf_email(
                         pdf_bytes=pdf_bytes,
                         pdf_filename=st.session_state.last_pdf_filename,
-                        to_email=st.secrets["ADMIN_EMAIL"],
+                        to_email=admin_email,
                         subject=admin_subject,
                         body=admin_body,
                     )
