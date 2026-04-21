@@ -540,7 +540,7 @@ def build_requested_sampling_lines(payload: dict) -> str:
         requested = []
 
         # Toujours sanguin dans le protocole d'inclusion
-        requested.append("Prélèvement sanguin (10 tubes dont 9 secs et 1 EDTA)")
+        requested.append("Prélèvement sanguin (10 tubes dont 9 secs et 1 EDTA) + 1 tube pour les autres analyses")
 
         if horse.get("accord_prelevement_liquide_synovial", False):
             requested.append("Prélèvement de liquide synovial")
@@ -584,11 +584,11 @@ def build_admin_email_content(payload: dict) -> tuple[str, str]:
 Nous vous contactons dans le cadre du projet RESOLVE, porté par le RESPE et l’ANSES, visant à améliorer le diagnostic de la borréliose de Lyme chez le cheval grâce à une enquête de terrain. 
 Pour cela, nous sollicitons votre collaboration afin d’inclure des chevaux suspectés de borréliose de Lyme parmi ceux suivis par votre structure. Pour chaque cheval inclus répondant à nos critères d’inclusion, il vous sera simplement demandé de réaliser des prélèvements et de compléter un court questionnaire clinique et contextuel. Les analyses liées à la borréliose de Lyme (ELISA + WB + PCR) sont prises en charge, tout comme l’envoi des échantillons au laboratoire LABEO et la transmission des résultats. Les données collectées permettront de développer un outil d’aide au diagnostic totalement gratuit, afin de mieux caractériser la maladie et d’harmoniser les pratiques.
 
-Ce mail fait suite à la demande de {contact_prenom} {contact_nom}, qui souhaiterait réaliser les prélèvements suivants :
+Ce mail fait suite à la demande de {contact_prenom} {contact_nom}, qui souhaiterait réaliser les prélèvements et analyses ci-dessous :
 
 {requested_lines}
 
-Voici ci-dessous les différentes étapes à suivre pour la prise en charge des analyses et votre entrée dans l'étude :
+Voici les différentes étapes à suivre pour la prise en charge des analyses et votre entrée dans l'étude :
 
 1 – Nous communiquer l'adresse de votre clinique pour recevoir votre kit RESOLVE dans les prochains jours (06.42.13.69.64)
 
@@ -598,11 +598,11 @@ Voici ci-dessous les différentes étapes à suivre pour la prise en charge des 
 
 4 – Prélèvements sanguins (10 tubes dont 9 secs et 1 EDTA) + autres prélèvements / analyses si demandés précédemment.
 
-5 – Collage des étiquettes RESOLVE correspondant au N° du cheval sur les tubes de prélèvements.
+5 – Collage des étiquettes RESOLVE correspondant au N° du cheval sur les tubes de prélèvements. 
 
 6 – Renseignement du questionnaire papier ou en ligne.
 
-7 – Envoi d’un message informant du prélèvement au 06 42 13 69 64 pour recevoir le e-bon qui prend en charge l’acheminement des prélèvements.
+7 – Envoi d’un message informant des prélèvements au 06 42 13 69 64 pour recevoir le e-bon qui prend en charge l’acheminement des prélèvements.
 
 8 – Construction du colis avec l’ensemble des pièces précédentes et envoi à :
 
