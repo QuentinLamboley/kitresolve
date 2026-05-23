@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
+import json
 import mimetypes
 import os
 import re
-import time
 import tempfile
 from datetime import datetime, timezone
-from contextlib import contextmanager
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
+from urllib.request import urlopen
 from xml.sax.saxutils import escape
+from zipfile import BadZipFile
 import smtplib
 from email.message import EmailMessage
+from zoneinfo import ZoneInfo
+
+from filelock import FileLock, Timeout
 
 import pandas as pd
 import streamlit as st
@@ -22,6 +27,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from openpyxl.utils.exceptions import InvalidFileException
 
 # ==============================================================================
 # CONFIG
@@ -29,7 +35,12 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 APP_TITLE = "RESOLVE — Étude prospective"
 DATA_DIR = "data"
 XLSX_PATH = os.path.join(DATA_DIR, "resolve_study_data.xlsx")
-ADMIN_PASSWORD = "SeeALL"
+# Le mot de passe administrateur ne doit jamais être codé en dur.
+# À définir dans Streamlit secrets ou variable d’environnement : ADMIN_PASSWORD.
+ADMIN_NOTIFICATION_EMAIL = "q.lamboley78@gmail.com"
+LABEO_EMAIL = "Melanie.HAMELIN@laboratoire-labeo.fr"
+CONSENT_FORM_FILENAME = "Formulaire_consentement-2-1-2.pdf"
+CONSENT_FORM_URL = "https://raw.githubusercontent.com/QuentinLamboley/kitresolve/main/Formulaire_consentement-2-1-2.pdf"
 
 DETENTEUR_IMAGE_PATH = "https://raw.githubusercontent.com/QuentinLamboley/kitresolve/main/detenteurs.png"
 VETERINAIRE_IMAGE_PATH = "https://raw.githubusercontent.com/QuentinLamboley/kitresolve/main/veterinairesequin.png"
@@ -39,9 +50,15 @@ SHEET_SAMPLES = "sample_locations"
 
 SUBMISSION_COLUMNS = [
     "submission_id",
+    "candidature_id",
     "timestamp_utc",
     "profil",
     "statut_dossier",
+    "date_decision_utc",
+    "mail_admin_notification_envoye",
+    "mail_candidat_envoye",
+    "mail_veterinaire_envoye",
+    "mail_labeo_envoye",
     "contact_prenom",
     "contact_nom",
     "contact_email",
@@ -133,47 +150,64 @@ DEFAULT_STATUS = "nouvelle_demande"
 # ==============================================================================
 # HELPERS
 # ==============================================================================
-@contextmanager
-def file_lock(lock_path: str, timeout_s: float = 12.0):
-    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
-    start = time.time()
-    f = open(lock_path, "w", encoding="utf-8")
-    try:
-        try:
-            import fcntl
+def file_lock(lock_path: str, timeout_s: float = 12.0) -> FileLock:
+    """Verrou fichier fiable et cross-platform via filelock.
 
-            while True:
-                try:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    if time.time() - start > timeout_s:
-                        raise TimeoutError("Impossible d'obtenir le verrou fichier.")
-                    time.sleep(0.05)
-        except Exception:
-            pass
-
-        yield
-    finally:
-        try:
-            import fcntl
-
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
-        f.close()
+    Important : installer la dépendance avec `pip install filelock`.
+    """
+    lock_dir = os.path.dirname(lock_path) or "."
+    os.makedirs(lock_dir, exist_ok=True)
+    return FileLock(lock_path, timeout=timeout_s)
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def normalize_spaces(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "").strip())
+def normalize_spaces(s) -> str:
+    if s is None:
+        return ""
+    try:
+        if pd.isna(s):
+            return ""
+    except Exception:
+        pass
+    return re.sub(r"\s+", " ", str(s).strip())
 
 
 def normalize_email(email: str) -> str:
     return normalize_spaces(email).lower()
+
+
+def text_to_bool(value) -> bool:
+    return str(value or "").strip().lower() in {"oui", "yes", "true", "1", "vrai"}
+
+
+def get_candidature_id_from_submission_id(submission_id: str) -> str:
+    sid = normalize_spaces(str(submission_id or ""))
+    return re.sub(r"-H\d{2}$", "", sid)
+
+
+def make_payload_fingerprint(payload: dict) -> str:
+    serializable = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(serializable.encode("utf-8")).hexdigest()
+
+
+def normalize_recipient_list(value) -> List[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        candidates = re.split(r"[,;]", value)
+    else:
+        candidates = list(value)
+    out = []
+    seen = set()
+    for item in candidates:
+        email = normalize_email(str(item))
+        if email and is_valid_email(email) and email not in seen:
+            out.append(email)
+            seen.add(email)
+    return out
 
 
 def normalize_phone(phone: str) -> str:
@@ -220,6 +254,11 @@ def make_sample_id() -> str:
 
 
 def ensure_store_exists():
+    """Crée le classeur s’il n’existe pas, mais ne réécrit jamais un classeur illisible.
+
+    Si le fichier existe et semble corrompu/inaccessible, on lève une erreur afin
+    d’éviter tout écrasement accidentel des données terrain.
+    """
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.exists(XLSX_PATH):
         with pd.ExcelWriter(XLSX_PATH, engine="openpyxl") as writer:
@@ -229,14 +268,40 @@ def ensure_store_exists():
             pd.DataFrame(columns=SAMPLE_COLUMNS).to_excel(
                 writer, sheet_name=SHEET_SAMPLES, index=False
             )
+        return
+
+    try:
+        with pd.ExcelFile(XLSX_PATH, engine="openpyxl"):
+            pass
+    except (BadZipFile, InvalidFileException, OSError, ValueError) as exc:
+        raise RuntimeError(
+            "Le fichier Excel de stockage existe mais il est illisible ou potentiellement corrompu. "
+            "Par sécurité, l’application refuse de le remplacer automatiquement. "
+            f"Fichier concerné : {XLSX_PATH}"
+        ) from exc
 
 
 def load_sheet(sheet_name: str, expected_columns: List[str]) -> pd.DataFrame:
     ensure_store_exists()
     try:
         df = pd.read_excel(XLSX_PATH, sheet_name=sheet_name, engine="openpyxl")
-    except Exception:
-        df = pd.DataFrame(columns=expected_columns)
+    except ValueError as exc:
+        # Feuille absente : on retourne une table vide, sans toucher au fichier existant.
+        if "Worksheet" in str(exc) or "worksheet" in str(exc):
+            df = pd.DataFrame(columns=expected_columns)
+        else:
+            raise RuntimeError(
+                f"Impossible de lire la feuille {sheet_name!r} du classeur RESOLVE."
+            ) from exc
+    except (BadZipFile, InvalidFileException, OSError) as exc:
+        raise RuntimeError(
+            "Impossible de lire le classeur RESOLVE. Le fichier peut être corrompu, verrouillé ou inaccessible. "
+            "Aucune donnée ne sera écrasée automatiquement."
+        ) from exc
+
+    # Migration douce : les anciennes versions du fichier n’avaient pas ces colonnes.
+    if sheet_name == SHEET_SUBMISSIONS and "candidature_id" not in df.columns and "submission_id" in df.columns:
+        df["candidature_id"] = df["submission_id"].apply(get_candidature_id_from_submission_id)
 
     for c in expected_columns:
         if c not in df.columns:
@@ -456,9 +521,15 @@ def build_submission_rows(payload: dict) -> List[dict]:
     for idx, horse in enumerate(horses, start=1):
         row = {
             "submission_id": f"{base_submission_id}-H{idx:02d}",
+            "candidature_id": base_submission_id,
             "timestamp_utc": utc_now_iso(),
             "profil": profil,
             "statut_dossier": DEFAULT_STATUS,
+            "date_decision_utc": "",
+            "mail_admin_notification_envoye": "non",
+            "mail_candidat_envoye": "non",
+            "mail_veterinaire_envoye": "non",
+            "mail_labeo_envoye": "non",
             "contact_prenom": normalize_spaces(payload.get("contact_prenom", "")),
             "contact_nom": normalize_spaces(payload.get("contact_nom", "")),
             "contact_email": normalize_email(payload.get("contact_email", "")),
@@ -522,13 +593,29 @@ def get_download_bytes(path: str) -> bytes:
         return f.read()
 
 def get_secret(name: str, default=None, required: bool = False):
-    value = st.secrets.get(name, default)
+    """Lit une configuration depuis les variables d’environnement puis Streamlit secrets."""
+    value = os.environ.get(name)
+    if value is None:
+        try:
+            value = st.secrets.get(name, default)
+        except Exception:
+            value = default
     if required and (value is None or str(value).strip() == ""):
         raise RuntimeError(
             f"Secret manquant : {name}. "
-            "Vérifie les secrets de l'app Streamlit Cloud ou le fichier .streamlit/secrets.toml."
+            "Ajoute-le dans les secrets Streamlit Cloud, dans .streamlit/secrets.toml, "
+            "ou comme variable d’environnement."
         )
     return value
+
+
+def get_admin_password() -> str:
+    return str(get_secret("ADMIN_PASSWORD", required=True))
+
+
+def get_admin_notification_email() -> str:
+    return normalize_email(get_secret("ADMIN_NOTIFICATION_EMAIL", ADMIN_NOTIFICATION_EMAIL))
+
 
 def build_requested_sampling_lines(payload: dict) -> str:
     lines = []
@@ -566,22 +653,205 @@ def build_requested_sampling_lines(payload: dict) -> str:
     return "\n".join(lines) if lines else "- Aucun prélèvement spécifique renseigné"
 
 
-def build_admin_email_content(payload: dict) -> tuple[str, str]:
-    profil = payload.get("profil", "")
+def format_horse_names(payload: dict) -> str:
+    names = [normalize_spaces(h.get("cheval_nom", "")) for h in payload.get("horses", [])]
+    names = [n for n in names if n]
+    if not names:
+        return "le cheval / les chevaux concerné(s)"
+    if len(names) == 1:
+        return f"le cheval {names[0]}"
+    return "les chevaux " + ", ".join(names[:-1]) + " et " + names[-1]
+
+
+def format_horse_inclusion_sentence(payload: dict) -> str:
+    n = len(payload.get("horses", []))
+    names = format_horse_names(payload)
+    if n <= 1:
+        return f"{names} a été inclus dans l’enquête RESOLVE"
+    return f"{names} ont été inclus dans l’enquête RESOLVE"
+
+
+def group_rows_to_payload(group_df: pd.DataFrame) -> dict:
+    if group_df.empty:
+        raise ValueError("Candidature introuvable.")
+    first = group_df.iloc[0].to_dict()
+
+    horses = []
+    for _, row in group_df.iterrows():
+        r = row.to_dict()
+        horses.append(
+            {
+                "cheval_nom": normalize_spaces(r.get("cheval_nom", "")),
+                "cheval_age": normalize_spaces(r.get("cheval_age", "")),
+                "cheval_sexe": normalize_spaces(r.get("cheval_sexe", "")),
+                "cheval_race": normalize_spaces(r.get("cheval_race", "")),
+                "cheval_commune": normalize_spaces(r.get("cheval_commune", "")),
+                "cheval_departement": normalize_spaces(r.get("cheval_departement", "")),
+                "cheval_lieu_detention_coordonnees": normalize_spaces(r.get("cheval_lieu_detention_coordonnees", "")),
+                "contact_regulier_tiques_vegetation": text_to_bool(r.get("contact_regulier_tiques_vegetation")),
+                "aucune_maladie_precise_connue": text_to_bool(r.get("aucune_maladie_precise_connue")),
+                "signes_cliniques_evocateurs": text_to_bool(r.get("signes_cliniques_evocateurs")),
+                "signes_cliniques_generaux": text_to_bool(r.get("signes_cliniques_generaux")),
+                "signes_cliniques_articulaires": text_to_bool(r.get("signes_cliniques_articulaires")),
+                "signes_cliniques_oculaires": text_to_bool(r.get("signes_cliniques_oculaires")),
+                "signes_cliniques_cutanes": text_to_bool(r.get("signes_cliniques_cutanes")),
+                "accord_prelevement_liquide_synovial": text_to_bool(r.get("accord_prelevement_liquide_synovial")),
+                "accord_prelevement_humeur_aqueuse": text_to_bool(r.get("accord_prelevement_humeur_aqueuse")),
+                "accord_prelevement_cutane": text_to_bool(r.get("accord_prelevement_cutane")),
+                "resume_signes_cliniques": normalize_spaces(r.get("resume_signes_cliniques", "")),
+                "accord_bilan_sanguin_complet": text_to_bool(r.get("accord_bilan_sanguin_complet")),
+                "accord_test_negatif_piroplasmose": text_to_bool(r.get("accord_test_negatif_piroplasmose")),
+                "accord_test_negatif_ehrlichiose": text_to_bool(r.get("accord_test_negatif_ehrlichiose")),
+                "contexte_large": normalize_spaces(r.get("contexte_large", "")),
+            }
+        )
+
+    return {
+        "profil": normalize_spaces(first.get("profil", "")),
+        "contact_prenom": normalize_spaces(first.get("contact_prenom", "")),
+        "contact_nom": normalize_spaces(first.get("contact_nom", "")),
+        "contact_email": normalize_email(first.get("contact_email", "")),
+        "contact_telephone": normalize_phone(first.get("contact_telephone", "")),
+        "contact_structure": normalize_spaces(first.get("contact_structure", "")),
+        "contact_adresse": normalize_spaces(first.get("contact_adresse", "")),
+        "contact_ville": normalize_spaces(first.get("contact_ville", "")),
+        "contact_code_postal": normalize_spaces(first.get("contact_code_postal", "")),
+        "contact_region": normalize_spaces(first.get("contact_region", "")),
+        "veterinaire_prenom": normalize_spaces(first.get("veterinaire_prenom", "")),
+        "veterinaire_nom": normalize_spaces(first.get("veterinaire_nom", "")),
+        "veterinaire_email": normalize_email(first.get("veterinaire_email", "")),
+        "veterinaire_telephone": normalize_phone(first.get("veterinaire_telephone", "")),
+        "veterinaire_structure": normalize_spaces(first.get("veterinaire_structure", "")),
+        "veterinaire_adresse": normalize_spaces(first.get("veterinaire_adresse", "")),
+        "veterinaire_ville": normalize_spaces(first.get("veterinaire_ville", "")),
+        "veterinaire_code_postal": normalize_spaces(first.get("veterinaire_code_postal", "")),
+        "veterinaire_region": normalize_spaces(first.get("veterinaire_region", "")),
+        "horses": horses,
+        "souhaite_etre_recontacte": text_to_bool(first.get("souhaite_etre_recontacte")),
+        "consentement_contact": text_to_bool(first.get("consentement_contact")),
+        "consentement_donnees": text_to_bool(first.get("consentement_donnees")),
+        "a_besoin_kit_resolve": text_to_bool(first.get("a_besoin_kit_resolve")),
+        "procedure_diagnostique_habituelle": normalize_spaces(first.get("procedure_diagnostique_habituelle", "")),
+    }
+
+
+def get_candidature_group(candidature_id: str) -> pd.DataFrame:
+    submissions, _ = load_all_data()
+    if submissions.empty:
+        return submissions
+    cid = normalize_spaces(candidature_id)
+    return submissions[submissions["candidature_id"].astype(str) == cid].copy()
+
+
+def mark_candidature_columns(candidature_id: str, updates: Dict[str, str]):
+    lock_path = XLSX_PATH + ".lock"
+    with file_lock(lock_path):
+        submissions = load_sheet(SHEET_SUBMISSIONS, SUBMISSION_COLUMNS)
+        samples = load_sheet(SHEET_SAMPLES, SAMPLE_COLUMNS)
+        cid = normalize_spaces(candidature_id)
+        mask = submissions["candidature_id"].astype(str) == cid
+        if not mask.any():
+            raise ValueError("Candidature introuvable dans le fichier de stockage.")
+        for key, value in updates.items():
+            if key not in submissions.columns:
+                submissions[key] = ""
+            submissions.loc[mask, key] = value
+        write_all_sheets_atomic({SHEET_SUBMISSIONS: submissions, SHEET_SAMPLES: samples})
+
+
+def get_consent_form_attachment() -> Tuple[str, bytes, str]:
+    """Retourne le formulaire de consentement en vraie pièce jointe PDF."""
+    local_path = normalize_spaces(str(get_secret("CONSENT_FORM_PATH", "")))
+    url = normalize_spaces(str(get_secret("CONSENT_FORM_URL", CONSENT_FORM_URL)))
+
+    if local_path and os.path.exists(local_path):
+        with open(local_path, "rb") as f:
+            content = f.read()
+        filename = os.path.basename(local_path) or CONSENT_FORM_FILENAME
+        return filename, content, "application/pdf"
+
+    with urlopen(url, timeout=20) as response:
+        content = response.read()
+    if not content:
+        raise RuntimeError("Formulaire de consentement vide ou inaccessible.")
+    return CONSENT_FORM_FILENAME, content, "application/pdf"
+
+
+def build_admin_notification_email_content(payload: dict, rows: List[dict]) -> tuple[str, str]:
+    profil = "détenteur" if payload.get("profil") == "detenteur" else "vétérinaire"
+    contact_name = f"{normalize_spaces(payload.get('contact_prenom', ''))} {normalize_spaces(payload.get('contact_nom', ''))}".strip()
+    contact_email = normalize_email(payload.get("contact_email", ""))
+    candidature_id = rows[0].get("candidature_id", "") if rows else "Non renseigné"
+    requested_lines = build_requested_sampling_lines(payload)
+    horse_names = format_horse_names(payload)
+
+    subject = f"[RESOLVE] Nouvelle candidature {profil} — {contact_name or contact_email}"
+    body = f"""Bonjour Quentin,
+
+Une nouvelle candidature RESOLVE vient d’être déposée sur la plateforme.
+
+ID candidature : {candidature_id}
+Profil : {profil}
+Déclarant : {contact_name or 'Non renseigné'}
+Mail : {contact_email or 'Non renseigné'}
+Téléphone : {normalize_phone(payload.get('contact_telephone', '')) or 'Non renseigné'}
+Cheval / chevaux : {horse_names}
+Nombre de chevaux concernés : {len(payload.get('horses', []))}
+
+Prélèvements / analyses demandés :
+{requested_lines}
+
+Le PDF récapitulatif de la candidature est joint à ce mail.
+
+Message automatique — plateforme RESOLVE.
+"""
+    return subject, body
+
+
+def build_rejection_email_content(payload: dict) -> tuple[str, str]:
+    subject = "Projet RESOLVE — réponse à votre candidature"
+    body = f"""Bonjour,
+
+Merci beaucoup pour votre candidature dans le cadre du projet RESOLVE.
+
+Après étude des informations transmises, {format_horse_names(payload)} ne rentre(nt) malheureusement pas dans les critères d’inclusion de l’enquête.
+
+Nous vous remercions sincèrement pour votre intérêt et pour le temps consacré à cette démarche.
+
+Bien cordialement,
+
+Quentin Lamboley
+Doctorant – Responsable du projet RESOLVE
+"""
+    return subject, body
+
+
+def build_applicant_validation_email_content(payload: dict) -> tuple[str, str]:
+    subject = "Projet RESOLVE — candidature validée"
+    body = f"""Bonjour,
+
+Merci beaucoup pour votre candidature dans le cadre du projet RESOLVE.
+
+Nous avons le plaisir de vous confirmer que {format_horse_inclusion_sentence(payload)}.
+
+L’équipe RESOLVE reviendra vers vous si des informations complémentaires sont nécessaires pour organiser la suite de la procédure.
+
+Bien cordialement,
+
+Quentin Lamboley
+Doctorant – Responsable du projet RESOLVE
+"""
+    return subject, body
+
+
+def build_vet_protocol_email_for_detenteur(payload: dict) -> tuple[str, str]:
     contact_prenom = normalize_spaces(payload.get("contact_prenom", ""))
     contact_nom = normalize_spaces(payload.get("contact_nom", ""))
-    contact_email = normalize_email(payload.get("contact_email", ""))
-
     requested_lines = build_requested_sampling_lines(payload)
+    subject = "Projet RESOLVE — inclusion d’un cheval suspecté de borréliose de Lyme"
+    body = f"""Bonjour,
 
-    if profil == "detenteur":
-        owner_email = contact_email
-        vet_email = normalize_email(payload.get("veterinaire_email", ""))
-
-        subject = "Demande Lyme Détenteur"
-        body = f"""Bonjour,
-
-Nous vous contactons dans le cadre du projet RESOLVE, porté par le RESPE et l’ANSES, visant à améliorer le diagnostic de la borréliose de Lyme chez le cheval grâce à une enquête de terrain. 
+Nous vous contactons dans le cadre du projet RESOLVE, porté par le RESPE et l’ANSES, visant à améliorer le diagnostic de la borréliose de Lyme chez le cheval grâce à une enquête de terrain.
 Pour cela, nous sollicitons votre collaboration afin d’inclure des chevaux suspectés de borréliose de Lyme parmi ceux suivis par votre structure. Pour chaque cheval inclus répondant à nos critères d’inclusion, il vous sera simplement demandé de réaliser des prélèvements et de compléter un court questionnaire clinique et contextuel. Les analyses liées à la borréliose de Lyme (ELISA + WB + PCR) sont prises en charge, tout comme l’envoi des échantillons au laboratoire LABEO et la transmission des résultats. Les données collectées permettront de développer un outil d’aide au diagnostic totalement gratuit, afin de mieux caractériser la maladie et d’harmoniser les pratiques.
 
 Ce mail fait suite à la demande de {contact_prenom} {contact_nom}, qui souhaiterait réaliser les prélèvements et analyses ci-dessous :
@@ -590,15 +860,15 @@ Ce mail fait suite à la demande de {contact_prenom} {contact_nom}, qui souhaite
 
 Voici les différentes étapes à suivre pour la prise en charge des analyses et votre entrée dans l'étude :
 
-1 – Nous communiquer l'adresse de votre clinique pour recevoir votre kit RESOLVE dans les prochains jours (06.42.13.69.64)
+1 – Vous inscrire via la plateforme suivante https://kitresolve.streamlit.app/ pour recevoir votre kit RESOLVE dans les prochains jours (06.42.13.69.64)
 
-2 – Renseignement du formulaire de consentement (ci-joint) par les propriétaires.
+2 – Renseignement du formulaire de consentement, joint à ce mail, par les propriétaires.
 
 3 – Réception du kit RESOLVE.
 
 4 – Prélèvements sanguins (10 tubes dont 9 secs et 1 EDTA) + autres prélèvements / analyses si demandés précédemment.
 
-5 – Collage des étiquettes RESOLVE correspondant au N° du cheval sur les tubes de prélèvements. 
+5 – Collage des étiquettes RESOLVE correspondant au N° du cheval sur les tubes de prélèvements.
 
 6 – Renseignement du questionnaire papier ou en ligne.
 
@@ -606,11 +876,9 @@ Voici les différentes étapes à suivre pour la prise en charge des analyses et
 
 8 – Construction du colis avec l’ensemble des pièces précédentes et envoi à :
 
------------------------------------------------------
 Laboratoire LABEO (Frank Duncombe)
 1 route Rosel
 14 280 Saint Contest
------------------------------------------------------
 
 Le protocole que vous recevrez dans le kit sera peut-être légèrement différent, mais la dernière version est celle de ce mail.
 
@@ -619,26 +887,17 @@ Nous vous remercions par avance pour votre aide, essentielle à la concrétisati
 Bien cordialement,
 
 Quentin Lamboley
-Doctorant – Responsable du projet RESOLVE
-
-Mail du détenteur : {owner_email}
-Mail du vétérinaire : {vet_email}
+Doctorant - Responsable du projet RESOLVE
 """
-        return subject, body
+    return subject, body
 
-    else:
-        vet_email = contact_email
-        owner_email = normalize_email(payload.get("proprietaire_email", ""))
 
-        # Comme le profil vétérinaire ne renseigne pas actuellement de mail propriétaire,
-        # on peut essayer de le déduire via les chevaux si tu l’ajoutes plus tard.
-        if not owner_email:
-            owner_email = "Non renseigné"
+def build_vet_protocol_email_for_veterinaire(payload: dict) -> tuple[str, str]:
+    requested_lines = build_requested_sampling_lines(payload)
+    subject = "Projet RESOLVE — procédure d’inclusion et kit RESOLVE"
+    body = f"""Bonjour,
 
-        subject = "Demande Lyme Vétérinaire"
-        body = f"""Bonjour,
-
-Nous vous recontactons dans le cadre du projet RESOLVE, porté par le RESPE et l’ANSES, visant à améliorer le diagnostic de la borréliose de Lyme chez le cheval grâce à une enquête de terrain. 
+Nous vous recontactons dans le cadre du projet RESOLVE, porté par le RESPE et l’ANSES, visant à améliorer le diagnostic de la borréliose de Lyme chez le cheval grâce à une enquête de terrain.
 Pour cela, nous sollicitons votre collaboration afin d’inclure des chevaux suspectés de borréliose de Lyme parmi ceux suivis par votre structure. Pour chaque cheval inclus répondant à nos critères d’inclusion, il vous sera simplement demandé de réaliser des prélèvements et de compléter un court questionnaire clinique et contextuel. Les analyses liées à la borréliose de Lyme (ELISA + WB + PCR) sont prises en charge, tout comme l’envoi des échantillons au laboratoire LABEO et la transmission des résultats. Les données collectées permettront de développer un outil d’aide au diagnostic totalement gratuit, afin de mieux caractériser la maladie et d’harmoniser les pratiques.
 
 Ce mail fait suite à votre demande dont les prélèvements seraient les suivants :
@@ -647,7 +906,7 @@ Ce mail fait suite à votre demande dont les prélèvements seraient les suivant
 
 Voici ci-dessous les différentes étapes à suivre pour la prise en charge des analyses et votre entrée dans l'étude :
 
-1 – Renseignement du formulaire de consentement (ci-joint) par les propriétaires.
+1 – Renseignement du formulaire de consentement, joint à ce mail, par les propriétaires.
 
 2 – Réception du kit RESOLVE à l'adresse complétée précédemment.
 
@@ -661,11 +920,9 @@ Voici ci-dessous les différentes étapes à suivre pour la prise en charge des 
 
 7 – Construction du colis avec l’ensemble des pièces précédentes et envoi à :
 
------------------------------------------------------
 Laboratoire LABEO (Frank Duncombe)
 1 route Rosel
 14 280 Saint Contest
------------------------------------------------------
 
 Le protocole que vous recevrez dans le kit sera peut-être légèrement différent, mais la dernière version est celle de ce mail.
 
@@ -675,11 +932,74 @@ Bien cordialement,
 
 Quentin Lamboley
 Doctorant – Responsable du projet RESOLVE
-
-Mail du détenteur : {owner_email}
-Mail du vétérinaire : {vet_email}
 """
-        return subject, body
+    return subject, body
+
+
+def build_labeo_email_content(payload: dict) -> tuple[str, str]:
+    now_paris = datetime.now(ZoneInfo("Europe/Paris"))
+    moment = "excellente journée" if now_paris.hour < 13 else "excellente fin de journée"
+    n_horses = max(1, len(payload.get("horses", [])))
+    vet_nom = normalize_spaces(payload.get("veterinaire_nom") or payload.get("contact_nom") or "")
+    vet_prenom = normalize_spaces(payload.get("veterinaire_prenom") or payload.get("contact_prenom") or "")
+    vet_structure = normalize_spaces(payload.get("veterinaire_structure") or payload.get("contact_structure") or "")
+    vet_adresse = normalize_spaces(payload.get("veterinaire_adresse") or payload.get("contact_adresse") or "")
+    vet_cp = normalize_spaces(payload.get("veterinaire_code_postal") or payload.get("contact_code_postal") or "")
+    vet_ville = normalize_spaces(payload.get("veterinaire_ville") or payload.get("contact_ville") or "")
+
+    vet_identity = " ".join([part for part in [vet_nom.upper() if vet_nom else "", vet_prenom] if part]).strip() or "vétérinaire non renseigné"
+    address_line = ", ".join([part for part in [vet_structure, vet_adresse, f"{vet_cp} {vet_ville}".strip()] if part]) or "adresse non renseignée"
+
+    subject = "Projet RESOLVE — demande d’envoi de kit"
+    body = f"""Bonjour Mélanie,
+
+C'est Quentin Lamboley du projet RESOLVE. Ceci est un mail automatique issu de mon programme d'automatisation de l'étude.
+
+Est-ce que par hasard tu aurais la possibilité d'envoyer {n_horses} nouveau(x) kit(s) RESOLVE à l'intention de {vet_identity}, à l'adresse suivante :
+
+{address_line}
+
+Je te remercie par avance et te souhaite une {moment}.
+
+Quentin
+"""
+    return subject, body
+
+
+def send_email_with_attachments(
+    to_email: str,
+    subject: str,
+    body: str,
+    cc: Optional[str | List[str]] = None,
+    attachments: Optional[List[Tuple[str, bytes, str]]] = None,
+):
+    smtp_user = get_secret("SMTP_USER", required=True)
+    smtp_host = get_secret("SMTP_HOST", required=True)
+    smtp_port = int(get_secret("SMTP_PORT", required=True))
+    smtp_password = get_secret("SMTP_PASSWORD", required=True)
+
+    to_list = normalize_recipient_list(to_email)
+    cc_list = [e for e in normalize_recipient_list(cc) if e not in set(to_list)]
+    if not to_list:
+        raise RuntimeError("Aucun destinataire valide pour l’envoi du mail.")
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = smtp_user
+    msg["To"] = ", ".join(to_list)
+    if cc_list:
+        msg["Cc"] = ", ".join(cc_list)
+    msg.set_content(body)
+
+    for filename, content, mime_type in attachments or []:
+        maintype, subtype = (mime_type or "application/octet-stream").split("/", 1)
+        msg.add_attachment(content, maintype=maintype, subtype=subtype, filename=filename)
+
+    recipients = to_list + cc_list
+    with smtplib.SMTP_SSL(smtp_host, smtp_port) as smtp:
+        smtp.login(smtp_user, smtp_password)
+        smtp.send_message(msg, from_addr=smtp_user, to_addrs=recipients)
+
 
 def send_pdf_email(
     pdf_bytes: bytes,
@@ -687,28 +1007,109 @@ def send_pdf_email(
     to_email: str,
     subject: str,
     body: str,
+    cc: Optional[str | List[str]] = None,
 ):
-    smtp_user = get_secret("SMTP_USER", required=True)
-    smtp_host = get_secret("SMTP_HOST", required=True)
-    smtp_port = int(get_secret("SMTP_PORT", required=True))
-    smtp_password = get_secret("SMTP_PASSWORD", required=True)
-
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = smtp_user
-    msg["To"] = to_email
-    msg.set_content(body)
-
-    msg.add_attachment(
-        pdf_bytes,
-        maintype="application",
-        subtype="pdf",
-        filename=pdf_filename,
+    send_email_with_attachments(
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        cc=cc,
+        attachments=[(pdf_filename, pdf_bytes, "application/pdf")],
     )
 
-    with smtplib.SMTP_SSL(smtp_host, smtp_port) as smtp:
-        smtp.login(smtp_user, smtp_password)
-        smtp.send_message(msg)     
+
+def notify_admin_new_submission(payload: dict, rows: List[dict], pdf_bytes: bytes, pdf_filename: str):
+    subject, body = build_admin_notification_email_content(payload, rows)
+    admin_email = get_admin_notification_email()
+    send_pdf_email(
+        pdf_bytes=pdf_bytes,
+        pdf_filename=pdf_filename,
+        to_email=admin_email,
+        subject=subject,
+        body=body,
+    )
+    if rows:
+        mark_candidature_columns(rows[0]["candidature_id"], {"mail_admin_notification_envoye": "oui"})
+
+
+def process_rejection(candidature_id: str):
+    group_df = get_candidature_group(candidature_id)
+    payload = group_rows_to_payload(group_df)
+    first = group_df.iloc[0]
+    admin_email = get_admin_notification_email()
+
+    if not text_to_bool(first.get("mail_candidat_envoye")):
+        subject, body = build_rejection_email_content(payload)
+        send_email_with_attachments(
+            to_email=payload.get("contact_email", ""),
+            cc=admin_email,
+            subject=subject,
+            body=body,
+        )
+        mark_candidature_columns(candidature_id, {"mail_candidat_envoye": "oui"})
+
+    mark_candidature_columns(
+        candidature_id,
+        {"statut_dossier": "refusee", "date_decision_utc": utc_now_iso()},
+    )
+
+
+def process_validation(candidature_id: str):
+    group_df = get_candidature_group(candidature_id)
+    payload = group_rows_to_payload(group_df)
+    first = group_df.iloc[0]
+    admin_email = get_admin_notification_email()
+    consent_attachment = get_consent_form_attachment()
+
+    if not text_to_bool(first.get("mail_candidat_envoye")):
+        subject, body = build_applicant_validation_email_content(payload)
+        send_email_with_attachments(
+            to_email=payload.get("contact_email", ""),
+            cc=admin_email,
+            subject=subject,
+            body=body,
+        )
+        mark_candidature_columns(candidature_id, {"mail_candidat_envoye": "oui"})
+
+    if payload.get("profil") == "detenteur":
+        if not text_to_bool(first.get("mail_veterinaire_envoye")):
+            subject, body = build_vet_protocol_email_for_detenteur(payload)
+            send_email_with_attachments(
+                to_email=payload.get("veterinaire_email", ""),
+                cc=admin_email,
+                subject=subject,
+                body=body,
+                attachments=[consent_attachment],
+            )
+            mark_candidature_columns(candidature_id, {"mail_veterinaire_envoye": "oui"})
+    else:
+        if not text_to_bool(first.get("mail_veterinaire_envoye")):
+            subject, body = build_vet_protocol_email_for_veterinaire(payload)
+            send_email_with_attachments(
+                to_email=payload.get("contact_email", ""),
+                cc=admin_email,
+                subject=subject,
+                body=body,
+                attachments=[consent_attachment],
+            )
+            mark_candidature_columns(candidature_id, {"mail_veterinaire_envoye": "oui"})
+
+        refreshed = get_candidature_group(candidature_id).iloc[0]
+        if not text_to_bool(refreshed.get("mail_labeo_envoye")):
+            subject, body = build_labeo_email_content(payload)
+            send_email_with_attachments(
+                to_email=LABEO_EMAIL,
+                cc=admin_email,
+                subject=subject,
+                body=body,
+            )
+            mark_candidature_columns(candidature_id, {"mail_labeo_envoye": "oui"})
+
+    mark_candidature_columns(
+        candidature_id,
+        {"statut_dossier": "validee", "date_decision_utc": utc_now_iso()},
+    )
+
 
 def image_to_data_uri(path: str) -> str:
     if not path:
@@ -1028,34 +1429,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-
-
-
-
-
-
-
-
-
-
-
-with st.expander("DEBUG SECRETS", expanded=False):
-    st.write("Clés chargées :", list(st.secrets.keys()))
-    st.write("ADMIN_EMAIL présent ?", "ADMIN_EMAIL" in st.secrets)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 if "selected_role" not in st.session_state:
     st.session_state.selected_role = None
 if "horse_count" not in st.session_state:
@@ -1066,6 +1439,8 @@ if "last_pdf_bytes" not in st.session_state:
     st.session_state.last_pdf_bytes = None
 if "last_pdf_filename" not in st.session_state:
     st.session_state.last_pdf_filename = None
+if "last_success_fingerprint" not in st.session_state:
+    st.session_state.last_success_fingerprint = None
 
 CUSTOM_CSS = """
 <style>
@@ -1804,11 +2179,11 @@ st.markdown(
   <div class="kicker">ANSES × RESPE · enquête prospective RESOLVE · Contact (uniquement si nécessaire) : 06.42.13.69.64 || quentin.lamboley@anses.fr</div>
   <div class="hero-title">PROJET RESOLVE<br>Objectif&nbsp;: mieux caractériser la borréliose de Lyme équine en France</div>
   <p class="hero-subtitle">
-    Cet site centralise les signalements et les demandes de kits dans le cadre de l’étude RESOLVE financée par l'IFCE et le Fonds Eperon.
+    Ce site centralise les signalements et les demandes de kits dans le cadre de l’étude RESOLVE financée par l’IFCE et le Fonds Éperon.
     L’objectif est de contribuer au développement et à la validation d’un outil d’aide au diagnostic à partir
-    d’une enquête prospective de terrain incluant des chevaux suspectés de Lyme. Nous souhaitons documenter de façon rigoureuse les tableaux cliniques    suspects, homogénéiser les pratiques,
+    d’une enquête prospective de terrain incluant des chevaux suspectés de Lyme. Nous souhaitons documenter de façon rigoureuse les tableaux cliniques suspects, homogénéiser les pratiques,
     et disposer de données de terrain solides pour améliorer la classification diagnostique des suspicions de borréliose de Lyme équine.
-    Pour chaque cheval inclut dans l'étude, les analyses liées à la borréliose de Lyme sont intégralement prises en charge
+    Pour chaque cheval inclus dans l’étude, les analyses liées à la borréliose de Lyme sont intégralement prises en charge
     <strong style="color:#ffffff;">(sérologie ELISA + Western Blot + PCR)</strong>, tout comme l’acheminement
     des échantillons vers le laboratoire partenaire qui fera les analyses (LABEO) et la transmission des résultats.
   </p>
@@ -1833,7 +2208,7 @@ if current_view == "home":
         st.markdown(
             """
 <div class="glass-card">
-  <h3 class="glass-title">PROTOCOLE DE L'ETUDE</h3>
+  <h3 class="glass-title">PROTOCOLE DE L’ÉTUDE</h3>
   <div class="timeline">
     <div class="timeline-item">
       <div class="timeline-badge">1</div>
@@ -1841,11 +2216,11 @@ if current_view == "home":
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">2</div>
-      <div><b>Etude des candidatures, validation des critères d'inclusion et réponse</b></div>
+      <div><b>Étude des candidatures, validation des critères d'inclusion et réponse</b></div>
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">3</div>
-      <div><b>Prise de rdv pour les prélèvements</b></div>
+      <div><b>Prise de rendez-vous pour les prélèvements</b></div>
     </div>
     <div class="timeline-item">
       <div class="timeline-badge">4</div>
@@ -1956,8 +2331,8 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
             f"""
 <div class="section-title" style="margin-top:0; margin-left:0;">Formulaire RESOLVE</div>
 <div class="section-note" style="margin-left:0;">
-  Vous êtes sur une page dédiée au parcours"<strong>{ROLE_OPTIONS[selected_role]["label"]}</strong>.
-  "Complétez les informations ci-dessous pour enregistrer votre demande proprement et de manière structurée.
+  Vous êtes sur la page dédiée au parcours <strong>{ROLE_OPTIONS[selected_role]["label"]}</strong>.<br>
+  Complétez les informations ci-dessous pour enregistrer votre demande de manière claire et structurée.
 </div>
 """,
             unsafe_allow_html=True,
@@ -1972,6 +2347,13 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
   Ajoutez un ou plusieurs chevaux, puis renseignez les éléments nécessaires.</div>
 """,
             unsafe_allow_html=True,
+        )
+
+        st.info(
+            "Confidentialité / RGPD : les informations transmises sont utilisées uniquement dans le cadre de l’étude RESOLVE, "
+            "pour l’étude des candidatures, l’organisation des prélèvements, le suivi logistique et l’analyse scientifique du projet. "
+            "Vous pouvez demander l’accès, la rectification ou la suppression de vos données en contactant l’équipe RESOLVE. "
+            "Seules les personnes habilitées du projet peuvent accéder aux données nominatives."
         )
 
         st.number_input(
@@ -2360,10 +2742,17 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
         }
 
         errors = validate_submission(payload)
+        fingerprint = make_payload_fingerprint(payload)
+
         if errors:
             st.error("Merci de corriger les éléments suivants :")
             for e in errors:
                 st.write(f"- {e}")
+        elif st.session_state.last_success_fingerprint == fingerprint:
+            st.warning(
+                "Cette demande semble avoir déjà été enregistrée. "
+                "La protection anti-double soumission a empêché un nouvel enregistrement identique."
+            )
         else:
             try:
                 rows = build_submission_rows(payload)
@@ -2373,23 +2762,19 @@ button[kind="secondary"][data-testid="baseButton-secondary"]{
                 st.session_state.last_pdf_bytes = pdf_bytes
                 st.session_state.last_pdf_filename = make_pdf_filename(selected_role)
 
-
                 try:
-                    admin_subject, admin_body = build_admin_email_content(payload)
-
-                    admin_email = get_secret("ADMIN_EMAIL", required=True)
-
-                    send_pdf_email(
+                    notify_admin_new_submission(
+                        payload=payload,
+                        rows=rows,
                         pdf_bytes=pdf_bytes,
                         pdf_filename=st.session_state.last_pdf_filename,
-                        to_email=admin_email,
-                        subject=admin_subject,
-                        body=admin_body,
                     )
                 except Exception as mail_error:
                     st.warning(
-                        f"La demande a bien été enregistrée, mais l’envoi automatique du PDF a échoué : {mail_error}"
+                        f"La demande a bien été enregistrée, mais l’envoi automatique du mail administrateur a échoué : {mail_error}"
                     )
+
+                st.session_state.last_success_fingerprint = fingerprint
 
                 st.success("✅ Votre demande a bien été enregistrée.")
                 if selected_role == "detenteur":
@@ -2445,7 +2830,7 @@ with st.expander("🔒 Espace administrateur"):
     )
 
     if admin_pass:
-        if admin_pass == ADMIN_PASSWORD:
+        if admin_pass == get_admin_password():
             submissions_df, samples_df = load_all_data()
             st.success("Accès administrateur autorisé ✅")
 
@@ -2479,7 +2864,95 @@ with st.expander("🔒 Espace administrateur"):
                 if submissions_df.empty:
                     st.info("Aucune inscription enregistrée pour le moment.")
                 else:
-                    st.dataframe(submissions_df, use_container_width=True, height=420)
+                    st.warning(
+                        "Stockage actuel : fichier Excel local sécurisé par verrou `filelock`. "
+                        "Pour une utilisation terrain à grande échelle ou multi-utilisateurs, privilégier une vraie base de données "
+                        "persistante et sauvegardée comme PostgreSQL, Supabase ou SQLite sur volume persistant."
+                    )
+
+                    # Vue synthétique par candidature, même si plusieurs chevaux sont associés.
+                    synth_rows = []
+                    for cid, group in submissions_df.groupby("candidature_id", dropna=False):
+                        first = group.iloc[0]
+                        horses_joined = ", ".join(
+                            [x for x in group["cheval_nom"].fillna("").astype(str).tolist() if x]
+                        )
+                        synth_rows.append(
+                            {
+                                "candidature_id": cid,
+                                "statut_dossier": first.get("statut_dossier", ""),
+                                "profil": first.get("profil", ""),
+                                "date": first.get("timestamp_utc", ""),
+                                "déclarant": f"{first.get('contact_prenom', '')} {first.get('contact_nom', '')}".strip(),
+                                "email": first.get("contact_email", ""),
+                                "chevaux": horses_joined,
+                                "nb_chevaux": len(group),
+                                "mail_admin": first.get("mail_admin_notification_envoye", ""),
+                                "mail_candidat": first.get("mail_candidat_envoye", ""),
+                                "mail_vétérinaire": first.get("mail_veterinaire_envoye", ""),
+                                "mail_labeo": first.get("mail_labeo_envoye", ""),
+                            }
+                        )
+                    synth_df = pd.DataFrame(synth_rows)
+                    st.dataframe(synth_df, use_container_width=True, height=300)
+
+                    st.markdown("#### Validation / invalidation d’une candidature")
+                    pending_df = synth_df[synth_df["statut_dossier"].fillna("").astype(str) == DEFAULT_STATUS]
+                    if pending_df.empty:
+                        st.info("Aucune candidature en attente de validation.")
+                    else:
+                        option_labels = []
+                        option_map = {}
+                        for _, row in pending_df.iterrows():
+                            label = (
+                                f"{row['candidature_id']} · {row['profil']} · "
+                                f"{row['déclarant']} · {row['nb_chevaux']} cheval(aux)"
+                            )
+                            option_labels.append(label)
+                            option_map[label] = row["candidature_id"]
+
+                        selected_label = st.selectbox(
+                            "Candidature à traiter",
+                            options=option_labels,
+                            key="admin_selected_candidature",
+                        )
+                        selected_cid = option_map[selected_label]
+                        selected_group = submissions_df[submissions_df["candidature_id"].astype(str) == str(selected_cid)]
+                        st.dataframe(selected_group, use_container_width=True, height=220)
+
+                        decision_notes = st.text_area(
+                            "Notes administrateur internes",
+                            placeholder="Optionnel : justification, éléments de décision, contact prévu, etc.",
+                            key="decision_notes_admin",
+                            height=90,
+                        )
+
+                        c_val, c_ref = st.columns(2, gap="medium")
+                        with c_val:
+                            if st.button("✅ Valider la candidature", use_container_width=True, key="validate_candidature_btn"):
+                                try:
+                                    if normalize_spaces(decision_notes):
+                                        mark_candidature_columns(selected_cid, {"notes_admin": normalize_spaces(decision_notes)})
+                                    process_validation(selected_cid)
+                                    st.success("Candidature validée et mails automatiques envoyés.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error("La validation n’a pas pu être finalisée.")
+                                    st.caption(f"Détail technique : {e}")
+                        with c_ref:
+                            if st.button("❌ Invalider la candidature", use_container_width=True, key="reject_candidature_btn"):
+                                try:
+                                    if normalize_spaces(decision_notes):
+                                        mark_candidature_columns(selected_cid, {"notes_admin": normalize_spaces(decision_notes)})
+                                    process_rejection(selected_cid)
+                                    st.success("Candidature invalidée et mail de refus envoyé.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error("L’invalidation n’a pas pu être finalisée.")
+                                    st.caption(f"Détail technique : {e}")
+
+                    with st.expander("Voir la table complète des lignes cheval"):
+                        st.dataframe(submissions_df, use_container_width=True, height=420)
 
             with admin_tabs[1]:
                 st.markdown("#### Carte des prélèvements")
@@ -2614,7 +3087,7 @@ with st.expander("🔒 Espace administrateur"):
                         mime="text/csv",
                     )
 
-            st.caption("Les données sont stockées côté serveur et centralisées dans un fichier Excel multi-feuilles.")
+            st.caption("Les données sont stockées côté serveur dans un fichier Excel multi-feuilles avec verrou filelock. Pour le terrain, une base PostgreSQL/Supabase ou SQLite persistante reste recommandée.")
         else:
             st.error("Mot de passe incorrect.")
     st.markdown("</div>", unsafe_allow_html=True)
